@@ -67,6 +67,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.services.ScreenReaderService
 import com.example.ui.theme.SalmonAccent
 import com.example.ui.theme.SignalOrange
 import com.example.ui.theme.TextMuted
@@ -109,22 +110,38 @@ fun SettingsScreen(
     return Settings.canDrawOverlays(context)
   }
 
+  fun isAccessibilityGranted(): Boolean {
+    val expectedComponentName = "${context.packageName}/${ScreenReaderService::class.java.canonicalName}"
+    val expectedShortName = "${context.packageName}/.services.ScreenReaderService"
+    val enabledServices = Settings.Secure.getString(
+      context.contentResolver,
+      Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+    ) ?: return false
+
+    return enabledServices.split(":").any {
+      it.equals(expectedComponentName, ignoreCase = true) ||
+      it.equals(expectedShortName, ignoreCase = true) ||
+      (it.contains(context.packageName) && it.contains("ScreenReaderService"))
+    }
+  }
+
   // Permission states initialized from real status
   var contactsEnabled by remember { mutableStateOf(isContactsGranted()) }
   var bluetoothEnabled by remember { mutableStateOf(isBluetoothGranted()) }
   var overlayModeEnabled by remember { mutableStateOf(isOverlayGranted()) }
-  var accessibilityEnabled by remember { mutableStateOf(false) }
+  var accessibilityEnabled by remember { mutableStateOf(isAccessibilityGranted()) }
 
   var statusNotice by remember { mutableStateOf<String?>(null) }
   val scrollState = rememberScrollState()
 
-  // Refresh states on lifecycle resume (especially when returning from system Settings screen for Overlay)
+  // Refresh states on lifecycle resume (especially when returning from system Settings screen for Overlay/Accessibility)
   DisposableEffect(lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
       if (event == Lifecycle.Event.ON_RESUME) {
         contactsEnabled = isContactsGranted()
         bluetoothEnabled = isBluetoothGranted()
         overlayModeEnabled = isOverlayGranted()
+        accessibilityEnabled = isAccessibilityGranted()
       }
     }
     lifecycleOwner.lifecycle.addObserver(observer)
@@ -239,15 +256,16 @@ fun SettingsScreen(
       SettingToggleRow(
         icon = Icons.Default.Visibility,
         title = "ACCESSIBILITY",
-        description = "Screen reading for UI context (requires manual enabling in system settings)",
+        description = if (accessibilityEnabled) {
+          "Screen reading active (ScreenReaderService connected)"
+        } else {
+          "Tap to enable ScreenReaderService in accessibility settings"
+        },
         isChecked = accessibilityEnabled,
         onCheckedChange = {
-          accessibilityEnabled = it
-          statusNotice = if (it) {
-            "ACCESSIBILITY // MANUAL SYSTEM ENABLING REQUIRED"
-          } else {
-            "ACCESSIBILITY // STANDBY"
-          }
+          val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+          context.startActivity(intent)
+          statusNotice = "OPENING ACCESSIBILITY SETTINGS..."
         },
         testTag = "toggle_accessibility"
       )
@@ -314,6 +332,7 @@ fun SettingsScreen(
           contactsEnabled = isContactsGranted()
           bluetoothEnabled = isBluetoothGranted()
           overlayModeEnabled = isOverlayGranted()
+          accessibilityEnabled = isAccessibilityGranted()
           statusNotice = "PREFERENCES COMMITTED // SYNC OK"
         },
         modifier = Modifier

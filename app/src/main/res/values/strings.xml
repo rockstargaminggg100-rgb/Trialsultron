@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Ultron</string>
+    <string name="accessibility_service_description">Enables Ultron to read on-screen context to answer user queries and execute commands.</string>
 </resources>
