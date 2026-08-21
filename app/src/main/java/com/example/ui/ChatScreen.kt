@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.background
@@ -150,8 +151,11 @@ fun ChatScreen(
         }
         messages = messages + ChatMessage(text = finalAiText, isUser = false)
       } catch (e: Exception) {
+        Log.e("ULTRON_CHAT_ERROR", "Gemini API request failed: [${e::class.simpleName}] ${e.message}", e)
+        val errorType = e::class.simpleName ?: "Exception"
+        val errorDetail = e.message?.take(80)?.let { ": $it" } ?: ""
         messages = messages + ChatMessage(
-          text = "SYSTEM // CONNECTION FAILED",
+          text = "SYSTEM // CONNECTION FAILED ($errorType$errorDetail)",
           isUser = false
         )
       } finally {
