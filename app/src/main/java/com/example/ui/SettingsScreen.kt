@@ -1,5 +1,14 @@
 package com.example.ui
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -37,6 +46,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,11 +57,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.ui.theme.SalmonAccent
 import com.example.ui.theme.SignalOrange
 import com.example.ui.theme.TextMuted
@@ -67,14 +82,78 @@ fun SettingsScreen(
   modifier: Modifier = Modifier,
   onNavigateToChat: () -> Unit = {}
 ) {
-  // Local state for the 4 preference toggles
-  var overlayModeEnabled by remember { mutableStateOf(true) }
-  var accessibilityEnabled by remember { mutableStateOf(true) }
-  var contactsEnabled by remember { mutableStateOf(false) }
-  var bluetoothEnabled by remember { mutableStateOf(true) }
+  val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
+
+  // Real permission check helpers
+  fun isContactsGranted(): Boolean {
+    return ContextCompat.checkSelfPermission(
+      context,
+      Manifest.permission.READ_CONTACTS
+    ) == PackageManager.PERMISSION_GRANTED
+  }
+
+  fun isBluetoothGranted(): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.BLUETOOTH_CONNECT
+      ) == PackageManager.PERMISSION_GRANTED
+    } else {
+      true
+    }
+  }
+
+  fun isOverlayGranted(): Boolean {
+    return Settings.canDrawOverlays(context)
+  }
+
+  // Permission states initialized from real status
+  var contactsEnabled by remember { mutableStateOf(isContactsGranted()) }
+  var bluetoothEnabled by remember { mutableStateOf(isBluetoothGranted()) }
+  var overlayModeEnabled by remember { mutableStateOf(isOverlayGranted()) }
+  var accessibilityEnabled by remember { mutableStateOf(false) }
 
   var statusNotice by remember { mutableStateOf<String?>(null) }
   val scrollState = rememberScrollState()
+
+  // Refresh states on lifecycle resume (especially when returning from system Settings screen for Overlay)
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        contactsEnabled = isContactsGranted()
+        bluetoothEnabled = isBluetoothGranted()
+        overlayModeEnabled = isOverlayGranted()
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(observer)
+    }
+  }
+
+  // Permission Request Launchers
+  val contactsPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { isGranted ->
+    contactsEnabled = isGranted
+    statusNotice = if (isGranted) {
+      "PERMISSION // READ_CONTACTS GRANTED"
+    } else {
+      "PERMISSION // READ_CONTACTS DENIED"
+    }
+  }
+
+  val bluetoothPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { isGranted ->
+    bluetoothEnabled = isGranted
+    statusNotice = if (isGranted) {
+      "PERMISSION // BLUETOOTH_CONNECT GRANTED"
+    } else {
+      "PERMISSION // BLUETOOTH_CONNECT DENIED"
+    }
+  }
 
   Column(
     modifier = modifier
@@ -124,54 +203,96 @@ fun SettingsScreen(
           .background(UltronBorder)
       )
 
-      // Toggle Row 1: Overlay Mode
+      // Toggle Row 1: Overlay Mode (Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
       SettingToggleRow(
         icon = Icons.Default.Layers,
         title = "OVERLAY MODE",
-        description = "Keep ULTRON listening on top of other apps",
+        description = if (overlayModeEnabled) {
+          "Overlay active: ULTRON listening over other apps"
+        } else {
+          "Tap to enable system overlay permission in settings"
+        },
         isChecked = overlayModeEnabled,
-        onCheckedChange = {
-          overlayModeEnabled = it
-          statusNotice = null
+        onCheckedChange = { targetState ->
+          if (targetState) {
+            val intent = Intent(
+              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+              Uri.parse("package:${context.packageName}")
+            )
+            context.startActivity(intent)
+            statusNotice = "OPENING SYSTEM OVERLAY SETTINGS..."
+          } else {
+            // Can't revoke system alert permission programmatically, redirect to settings
+            val intent = Intent(
+              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+              Uri.parse("package:${context.packageName}")
+            )
+            context.startActivity(intent)
+            statusNotice = "ADJUST OVERLAY PERMISSION IN SETTINGS"
+          }
         },
         testTag = "toggle_overlay_mode"
       )
 
-      // Toggle Row 2: Accessibility
+      // Toggle Row 2: Accessibility (Screen Reading)
       SettingToggleRow(
         icon = Icons.Default.Visibility,
         title = "ACCESSIBILITY",
-        description = "Screen reading for UI context",
+        description = "Screen reading for UI context (requires manual enabling in system settings)",
         isChecked = accessibilityEnabled,
         onCheckedChange = {
           accessibilityEnabled = it
-          statusNotice = null
+          statusNotice = if (it) {
+            "ACCESSIBILITY // MANUAL SYSTEM ENABLING REQUIRED"
+          } else {
+            "ACCESSIBILITY // STANDBY"
+          }
         },
         testTag = "toggle_accessibility"
       )
 
-      // Toggle Row 3: Contacts
+      // Toggle Row 3: Contacts (READ_CONTACTS runtime permission)
       SettingToggleRow(
         icon = Icons.Default.Contacts,
         title = "CONTACTS",
-        description = "Contact lookup for voice calls",
+        description = if (contactsEnabled) {
+          "Contact lookup granted for voice calls"
+        } else {
+          "Tap to request contact lookup permission"
+        },
         isChecked = contactsEnabled,
-        onCheckedChange = {
-          contactsEnabled = it
-          statusNotice = null
+        onCheckedChange = { targetState ->
+          if (targetState) {
+            contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+          } else {
+            // Inform user to manage in system app settings if already granted
+            statusNotice = "PERMISSION CAN BE REVOKED IN APP SETTINGS"
+          }
         },
         testTag = "toggle_contacts"
       )
 
-      // Toggle Row 4: Bluetooth
+      // Toggle Row 4: Bluetooth (BLUETOOTH_CONNECT runtime permission)
       SettingToggleRow(
         icon = Icons.Default.Bluetooth,
         title = "BLUETOOTH",
-        description = "Toggle Bluetooth and audio controls",
+        description = if (bluetoothEnabled) {
+          "Bluetooth controller link authorized"
+        } else {
+          "Tap to request Bluetooth connect permission"
+        },
         isChecked = bluetoothEnabled,
-        onCheckedChange = {
-          bluetoothEnabled = it
-          statusNotice = null
+        onCheckedChange = { targetState ->
+          if (targetState) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+              bluetoothPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            } else {
+              bluetoothEnabled = true
+              statusNotice = "BLUETOOTH LINK // ACTIVE"
+            }
+          } else {
+            statusNotice = "PERMISSION CAN BE REVOKED IN APP SETTINGS"
+          }
         },
         testTag = "toggle_bluetooth"
       )
@@ -181,6 +302,10 @@ fun SettingsScreen(
       // Apply Changes Button: Solid salmon-colored button with dark text
       Button(
         onClick = {
+          // Re-evaluate all real permission states
+          contactsEnabled = isContactsGranted()
+          bluetoothEnabled = isBluetoothGranted()
+          overlayModeEnabled = isOverlayGranted()
           statusNotice = "PREFERENCES COMMITTED // SYNC OK"
         },
         modifier = Modifier
