@@ -59,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.services.ScreenReaderService
 import com.example.ui.theme.SalmonAccent
 import com.example.ui.theme.SignalOrange
 import com.example.ui.theme.TextMuted
@@ -69,8 +70,11 @@ import com.example.ui.theme.UltronBorder
 import com.example.ui.theme.UltronBorderSubtle
 import com.example.ui.theme.UltronSurface
 import com.example.ui.theme.UltronUserBubble
-import kotlinx.coroutines.delay
+import com.google.firebase.Firebase
+import com.google.firebase.ai.ai
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -121,11 +125,38 @@ fun ChatScreen(
     inputText = ""
     isAiThinking = true
 
+    // Check if recent screen text is available from ScreenReaderService (within last 30 seconds)
+    val now = System.currentTimeMillis()
+    val screenText = ScreenReaderService.lastCapturedText.trim()
+    val isRecent = (now - ScreenReaderService.lastCapturedTimestamp) <= 30_000L
+
+    val prompt = if (screenText.isNotEmpty() && isRecent) {
+      "Current screen content: $screenText\n\nUser: $trimmed"
+    } else {
+      trimmed
+    }
+
     coroutineScope.launch {
-      delay(750) // Mock latency for AI response
-      val aiResponseText = generateMockAiResponse(trimmed)
-      messages = messages + ChatMessage(text = aiResponseText, isUser = false)
-      isAiThinking = false
+      try {
+        val generativeModel = Firebase.ai.generativeModel("gemini-2.5-flash")
+        val response = withContext(Dispatchers.IO) {
+          generativeModel.generateContent(prompt)
+        }
+        val responseText = response.text?.trim()
+        val finalAiText = if (!responseText.isNullOrEmpty()) {
+          responseText
+        } else {
+          "SYSTEM // NO RESPONSE PAYLOAD RECEIVED"
+        }
+        messages = messages + ChatMessage(text = finalAiText, isUser = false)
+      } catch (e: Exception) {
+        messages = messages + ChatMessage(
+          text = "SYSTEM // CONNECTION FAILED",
+          isUser = false
+        )
+      } finally {
+        isAiThinking = false
+      }
     }
   }
 
@@ -622,19 +653,5 @@ private fun BottomNavigationBar(
         color = if (isSettingsActive) SignalOrange else TextMuted
       )
     }
-  }
-}
-
-private fun generateMockAiResponse(input: String): String {
-  val lower = input.lowercase()
-  return when {
-    "alarm" in lower -> "Command acknowledged. Alarm subsystem is staged. Specify target timestamp to arm."
-    "call" in lower -> "Contact index queried. Confirm target recipient to initiate voice link."
-    "bluetooth" in lower -> "Bluetooth controller interface engaged. State power transition [ON/OFF]."
-    "music" in lower || "play" in lower -> "Audio playback daemon triggered. Initializing default media stream."
-    "screen" in lower || "read" in lower -> "Accessibility node scanner activated. Ready to parse viewport hierarchy."
-    "status" in lower || "uptime" in lower -> "ULTRON CORE 1.0: Active. Neural bridge latency: 18ms. Memory footprint: 42MB. All subsystems nominal."
-    "hello" in lower || "hi" in lower || "ultron" in lower -> "Greetings. ULTRON standby mode disengaged. How can I assist your operation?"
-    else -> "Query processed: \"$input\". Directive registered in command buffer."
   }
 }
