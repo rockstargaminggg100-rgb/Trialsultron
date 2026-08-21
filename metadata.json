@@ -1,0 +1,6 @@
+{
+  "name": "Ultron",
+  "description": "Hands-free voice and command assistant with system automation, screen reading, and floating overlay.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
