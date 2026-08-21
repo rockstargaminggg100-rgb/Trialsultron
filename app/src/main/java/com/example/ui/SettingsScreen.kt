@@ -100,6 +100,7 @@ fun SettingsScreen(
         Manifest.permission.BLUETOOTH_CONNECT
       ) == PackageManager.PERMISSION_GRANTED
     } else {
+      // Below API 31, Bluetooth permissions are declared at install-time with no runtime grant step needed
       true
     }
   }
@@ -272,14 +273,17 @@ fun SettingsScreen(
         testTag = "toggle_contacts"
       )
 
-      // Toggle Row 4: Bluetooth (BLUETOOTH_CONNECT runtime permission)
+      // Toggle Row 4: Bluetooth (BLUETOOTH_CONNECT runtime permission on API 31+)
       SettingToggleRow(
         icon = Icons.Default.Bluetooth,
         title = "BLUETOOTH",
-        description = if (bluetoothEnabled) {
-          "Bluetooth controller link authorized"
-        } else {
-          "Tap to request Bluetooth connect permission"
+        description = when {
+          Build.VERSION.SDK_INT < Build.VERSION_CODES.S ->
+            "Bluetooth available (no permission required on this Android version)"
+          bluetoothEnabled ->
+            "Bluetooth controller link authorized"
+          else ->
+            "Tap to request Bluetooth connect permission"
         },
         isChecked = bluetoothEnabled,
         onCheckedChange = { targetState ->
@@ -291,7 +295,11 @@ fun SettingsScreen(
               statusNotice = "BLUETOOTH LINK // ACTIVE"
             }
           } else {
-            statusNotice = "PERMISSION CAN BE REVOKED IN APP SETTINGS"
+            statusNotice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+              "PERMISSION CAN BE REVOKED IN APP SETTINGS"
+            } else {
+              "BLUETOOTH PERMISSIONS MANAGED BY SYSTEM INSTALL"
+            }
           }
         },
         testTag = "toggle_bluetooth"
